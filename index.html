@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8590c">
+<title>Yummy · ¿Quién pide mejor?</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#fff8f1;--card:#ffffff;--ink:#2b1d14;--mute:#7a6a5e;--line:#f0e1d3;--accent:#e8590c;--accent2:#c2410c;--on:#fff;--star:#f59f00;--good:#2f9e44;--bad:#c92a2a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#1a1410;--card:#262019;--ink:#f6ece2;--mute:#b3a396;--line:#3a3128;--accent:#ff8a3d;--accent2:#ffa566;--on:#1a1410;--star:#ffd43b;--good:#69db7c;--bad:#ff8787}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#1a1410;--card:#262019;--ink:#f6ece2;--mute:#b3a396;--line:#3a3128;--accent:#ff8a3d;--accent2:#ffa566;--on:#1a1410;--star:#ffd43b;--good:#69db7c;--bad:#ff8787}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100%}
+main{max-width:520px;margin:0 auto;padding:16px 16px 96px}
+h1{font-size:26px;margin:8px 0 2px}h2{font-size:19px;margin:20px 0 8px}
+.sub{color:var(--mute);margin:0 0 16px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:10px 0}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+input{width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit}
+button{font:inherit;cursor:pointer}
+.btn{width:100%;padding:14px;border:0;border-radius:14px;background:var(--accent);color:var(--on);font-weight:700;margin-top:14px}
+.btn.ghost{background:transparent;color:var(--accent2);border:1px solid var(--line)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));z-index:5}
+.tabs button{flex:1;background:none;border:0;color:var(--mute);padding:8px;border-radius:10px;font-size:13px}
+.tabs button.on{color:var(--accent2);font-weight:700}
+.tabs span{display:block;font-size:20px}
+.stars{display:flex;gap:4px;justify-content:center;margin:6px 0}
+.stars button{background:none;border:0;font-size:38px;line-height:1;color:var(--line);padding:2px}
+.stars button.f{color:var(--star)}
+.tag{display:inline-block;font-size:12px;padding:3px 9px;border-radius:99px;background:var(--line);color:var(--mute)}
+.tag.win{background:var(--good);color:var(--on)}
+.big{font-size:44px;text-align:center;margin:8px 0}
+.center{text-align:center}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{text-align:center}.stat b{font-size:28px;display:block}
+.crown{font-size:13px;color:var(--accent2);font-weight:700}
+.mute{color:var(--mute);font-size:14px}
+.link{background:none;border:0;color:var(--mute);text-decoration:underline;font-size:13px;margin-top:20px;padding:0}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<nav class="tabs" id="tabs"></nav>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script>
+var K = "yummy-v1";
+/* ===== CONFIGURACIÓN: pega aquí los datos de tu proyecto Supabase ===== */
+var SB_URL = "https://plytdrjilrrlanjytocd.supabase.co";
+var SB_KEY = "sb_publishable_BBu8Dm-0-wb9s1ziHDwkng_5CxAZztR";
+/* ======================================================================= */
+var S = { names: null, dates: [] }, sb = null, me = -1, uid = null, ready = false, local = false;
+var CP = null, DT = [], RT = {}, sig = "";
+var ui = { tab: "citas", view: "home", rate: null, rev: null };
+var TITLES = ["Catador Master", "Paladar de Oro", "Olfato Infalible", "Sommelier de Menús", "Ojo de Chef"];
+var LOW = ["Aprendiz de Cocina", "Explorador Valiente", "Apostador Gourmet", "Ruleta Rusa del Menú"];
+
+function load(){ try { return JSON.parse(localStorage.getItem(K)); } catch(e){ return null; } }
+function save(){ if (!local) return; try { localStorage.setItem(K, JSON.stringify(S)); } catch(e){} }
+function derive(){
+  if (!CP) { S = { names: null, dates: [] }; me = -1; return; }
+  me = CP.me;
+  S = { names: CP.names, dates: DT.map(function(d){
+    return { id: d.ts, rest: d.rest, date: d.date, dishes: d.dishes, r: [RT[d.ts + "_0"] || null, RT[d.ts + "_1"] || null] };
+  }) };
+}
+function refresh(){ derive(); if (ready && ["home","wait","reveal"].indexOf(ui.view) >= 0) render(); }
+async function loadRemote(){
+  var m = await sb.from("members").select("couple_id, idx, couples(code, names)").eq("user_id", uid).maybeSingle();
+  if (m.error) throw m.error;
+  if (!m.data) { CP = null; DT = []; RT = {}; return; }
+  var cid = m.data.couple_id;
+  var q = await Promise.all([
+    sb.from("dates").select("id, rest, day, dishes").eq("couple_id", cid).order("id"),
+    sb.from("ratings").select("date_id, idx, v").eq("couple_id", cid),
+    sb.from("members").select("idx").eq("couple_id", cid)
+  ]);
+  if (q[0].error || q[1].error || q[2].error) throw (q[0].error || q[1].error || q[2].error);
+  CP = { id: cid, me: m.data.idx, code: m.data.couples.code, names: m.data.couples.names, full: q[2].data.length >= 2 };
+  DT = q[0].data.map(function(x){ return { ts: x.id, rest: x.rest, date: x.day, dishes: x.dishes }; });
+  RT = {}; q[1].data.forEach(function(x){ RT[x.date_id + "_" + x.idx] = x.v; });
+}
+async function pull(){ try { await loadRemote(); } catch(e){ console.error(e); } derive(); }
+async function poll(){
+  if (!CP || document.hidden || ["home","wait","reveal"].indexOf(ui.view) < 0) return;
+  try { await loadRemote(); } catch(e){ return; }
+  var n = JSON.stringify([CP.full, DT, RT]);
+  if (n !== sig) { sig = n; refresh(); }
+}
+async function init(){
+  if (typeof supabase !== "undefined" && SB_URL.indexOf("TU-PROYECTO") < 0) {
+    try {
+      sb = supabase.createClient(SB_URL, SB_KEY);
+      var s = (await sb.auth.getSession()).data.session;
+      if (!s) { var r = await sb.auth.signInAnonymously(); if (r.error) throw r.error; s = r.data.session; }
+      uid = s.user.id;
+      await loadRemote();
+    } catch(e){ console.error("Supabase no disponible, modo local:", e); sb = null; }
+  }
+  if (!sb) { local = true; S = load() || S; ready = true; render(); return; }
+  ready = true; derive(); render();
+  setInterval(poll, 5000);
+  document.addEventListener("visibilitychange", poll);
+}
+function joinView(){
+  return '<h1>🍽️ Yummy</h1><p class="sub">Cada uno califica desde su teléfono. Crea una pareja o únete con el código de tu pareja.</p>' +
+    '<div class="card"><b>Crear pareja</b><label>Tu nombre</label><input id="n0" maxlength="20" placeholder="Ej: Ana"><label>Nombre de tu pareja</label><input id="n1" maxlength="20" placeholder="Ej: Luis"><button class="btn" onclick="createCouple()">Crear y obtener código</button></div>' +
+    '<div class="card"><b>Ya tengo un código</b><label>Código de pareja</label><input id="code" maxlength="8" placeholder="A1B2C3D4" style="text-transform:uppercase"><button class="btn" onclick="joinCouple()">Unirme</button></div>';
+}
+async function createCouple(){
+  var a = $("n0").value.trim(), b = $("n1").value.trim();
+  if (!a || !b) return;
+  var r = await sb.rpc("create_couple", { p_a: a, p_b: b });
+  if (r.error) { alert(r.error.message); return; }
+  await pull(); ui.view = "home"; render();
+}
+async function joinCouple(){
+  var c = $("code").value.trim();
+  if (!c) return;
+  var r = await sb.rpc("join_couple", { p_code: c });
+  if (r.error) { alert(r.error.message); return; }
+  await pull(); ui.view = "home"; render();
+}
+function waitView(){
+  var c = cita(ui.rate.id);
+  if (c && done(c)) { ui.rev = c.id; ui.view = "reveal"; return revealView(); }
+  return '<div class="center"><div class="big">🤫</div><h1>¡Guardado!</h1><p class="sub">Esperando a ' + esc(S.names[1 - me]) + '. Cuando califique, el veredicto aparece solo.</p><button class="btn ghost" onclick="ui.view=\'home\';render()">Volver</button></div>';
+}
+function esc(t){ return String(t).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function $(id){ return document.getElementById(id); }
+function done(c){ return c.r[0] && c.r[1]; }
+function stars(n){ return "★".repeat(n) + "☆".repeat(5 - n); }
+// puntaje real de un plato = lo que le puso la OTRA persona
+function real(c, d){ return c.r[1 - d][d]; }
+function selfr(c, d){ return c.r[d][d]; }
+function winner(c){ var a = real(c, 0), b = real(c, 1); return a > b ? 0 : b > a ? 1 : -1; }
+
+function stats(){
+  var out = [0, 1].map(function(){ return { wins: 0, tot: 0, n: 0, self: 0 }; });
+  S.dates.filter(done).forEach(function(c){
+    var w = winner(c);
+    [0, 1].forEach(function(p){
+      if (w === p) out[p].wins++;
+      out[p].tot += real(c, p); out[p].self += selfr(c, p); out[p].n++;
+    });
+  });
+  return out;
+}
+
+function render(){
+  var h = "";
+  if (!ready) h = '<p class="center mute" style="margin-top:80px">Cargando…</p>';
+  else if (!local && me < 0) h = joinView();
+  else if (!S.names) h = setup();
+  else if (ui.view === "wait") h = waitView();
+  else if (ui.view === "new") h = newDate();
+  else if (ui.view === "rate") h = rateView();
+  else if (ui.view === "pass") h = passView();
+  else if (ui.view === "reveal") h = revealView();
+  else h = ui.tab === "rank" ? rankView() : ui.tab === "hall" ? hallView() : home();
+  $("app").innerHTML = h;
+  $("tabs").style.display = ready && S.names && (local || me >= 0) && ui.view === "home" ? "flex" : "none";
+  $("tabs").innerHTML = [["citas","🍽️","Citas"],["rank","🏆","Ranking"],["hall","⭐","Salón"]].map(function(t){
+    return '<button class="' + (ui.tab === t[0] ? "on" : "") + '" onclick="go(\'' + t[0] + '\')"><span>' + t[1] + '</span>' + t[2] + '</button>';
+  }).join("");
+  window.scrollTo(0, 0);
+}
+function go(t){ ui.tab = t; ui.view = "home"; render(); }
+
+function setup(){
+  return '<h1>🍽️ Yummy</h1><p class="sub">¿Quién pide mejor? Cada uno califica el plato del otro, a ciegas.</p>' +
+  '<div class="card"><label>Tu nombre</label><input id="n0" maxlength="20" placeholder="Ej: Ana">' +
+  '<label>Nombre de tu pareja</label><input id="n1" maxlength="20" placeholder="Ej: Luis">' +
+  '<button class="btn" onclick="saveNames()">Empezar la guerra</button></div>' +
+  '<p class="mute center">Prototipo: todo se guarda en este dispositivo. Para calificar, se pasan el teléfono.</p>';
+}
+function saveNames(){
+  var a = $("n0").value.trim(), b = $("n1").value.trim();
+  if (!a || !b) return;
+  S.names = [a, b]; save(); render();
+}
+
+function home(){
+  var pend = S.dates.filter(function(c){ return !done(c); });
+  var fin = S.dates.filter(done).slice().reverse();
+  var h = '<h1>Citas</h1><p class="sub">' + esc(S.names[0]) + ' vs ' + esc(S.names[1]) + '</p>' +
+    (!local && CP && !CP.full ? '<div class="card mute">💌 Código de pareja: <b style="font-size:20px;letter-spacing:2px">' + esc(CP.code) + '</b><br>Pásaselo a ' + esc(S.names[1 - me]) + ' para que se una desde su teléfono.</div>' : '') + (local ? '<div class="card mute">Modo local: no se sincroniza entre teléfonos.</div>' : '') +
+    '<button class="btn" style="margin-top:0" onclick="ui.view=\'new\';render()">+ Nueva cita</button>';
+  if (pend.length){
+    h += '<h2>Pendientes de calificar</h2>';
+    pend.forEach(function(c){
+      var who = local ? (!c.r[0] ? 0 : 1) : me, wait = !local && c.r[me];
+      h += '<div class="card"><div class="row"><div><b>' + esc(c.rest) + '</b><div class="mute">' + esc(c.date) + '</div></div>' +
+        (wait ? '<span class="tag">Esperando a ' + esc(S.names[1 - me]) + '</span>' : '<button class="btn" style="width:auto;margin:0;padding:10px 14px" onclick="startRate(' + c.id + ',' + who + ')">Calificar' + (local ? ' (' + esc(S.names[who]) + ')' : '') + '</button>') + '</div>' +
+        '<div class="mute" style="margin-top:6px">' + esc(c.dishes[0]) + ' · ' + esc(c.dishes[1]) + '</div></div>';
+    });
+  }
+  h += '<h2>Historial</h2>';
+  if (!fin.length) h += '<p class="mute">Todavía no hay citas completas. Salgan a comer 🙂</p>';
+  fin.forEach(function(c){
+    var w = winner(c);
+    h += '<div class="card" onclick="showRev(' + c.id + ')"><div class="row"><b>' + esc(c.rest) + '</b>' +
+      '<span class="tag ' + (w >= 0 ? "win" : "") + '">' + (w >= 0 ? "Ganó " + esc(S.names[w]) : "Empate") + '</span></div>' +
+      '<div class="mute">' + esc(c.date) + ' · toca para ver el veredicto</div></div>';
+  });
+  if (local) h += '<button class="link" onclick="resetAll()">Borrar todos los datos</button>';
+  return h;
+}
+
+function newDate(){
+  var today = new Date().toISOString().slice(0, 10);
+  return '<h1>Nueva cita</h1><p class="sub">Menos de 30 segundos.</p><div class="card">' +
+    '<label>Restaurante</label><input id="rest" placeholder="Nombre del lugar">' +
+    '<label>Fecha</label><input id="date" type="date" value="' + today + '">' +
+    '<label>Plato de ' + esc(S.names[0]) + '</label><input id="d0" placeholder="Qué pidió">' +
+    '<label>Plato de ' + esc(S.names[1]) + '</label><input id="d1" placeholder="Qué pidió">' +
+    '<button class="btn" onclick="addDate()">Guardar y pedir veredicto</button>' +
+    '<button class="btn ghost" onclick="ui.view=\'home\';render()">Cancelar</button></div>';
+}
+function addDate(){
+  var r = $("rest").value.trim(), a = $("d0").value.trim(), b = $("d1").value.trim();
+  if (!r || !a || !b) return;
+  var c = { id: Date.now(), rest: r, date: $("date").value, dishes: [a, b], r: [null, null] };
+  if (local) { S.dates.push(c); save(); startRate(c.id, 0); }
+  else sb.from("dates").insert({ id: c.id, couple_id: CP.id, rest: c.rest, day: c.date, dishes: c.dishes }).then(async function(r){
+    if (r.error) { alert("No se pudo guardar: " + r.error.message); return; }
+    await pull(); startRate(c.id, me);
+  });
+}
+
+function cita(id){ return S.dates.filter(function(c){ return c.id === id; })[0]; }
+function startRate(id, p){ ui.rate = { id: id, p: p, v: [0, 0] }; ui.view = "rate"; render(); }
+function rateView(){
+  var c = cita(ui.rate.id), p = ui.rate.p, o = 1 - p;
+  var h = '<div class="center"><div class="big">🙈</div><h1>Turno de ' + esc(S.names[p]) + '</h1>' +
+    '<p class="sub">Califica en privado. ' + esc(S.names[o]) + ' no debe mirar.</p></div>';
+  [o, p].forEach(function(d){
+    h += '<div class="card center"><b>' + (d === p ? "Tu propio plato" : "El plato de " + esc(S.names[o])) + '</b>' +
+      '<div class="mute">' + esc(c.dishes[d]) + '</div><div class="stars">';
+    for (var i = 1; i <= 5; i++) h += '<button class="' + (ui.rate.v[d] >= i ? "f" : "") + '" onclick="setStar(' + d + ',' + i + ')" aria-label="' + i + ' estrellas">★</button>';
+    h += '</div></div>';
+  });
+  h += '<button class="btn" onclick="submitRate()">Guardar mi veredicto</button>';
+  return h;
+}
+function setStar(d, n){ ui.rate.v[d] = n; render(); }
+async function submitRate(){
+  if (!ui.rate.v[0] || !ui.rate.v[1]) { alert("Califica los dos platos con al menos 1 estrella."); return; }
+  var c = cita(ui.rate.id);
+  if (local) { c.r[ui.rate.p] = ui.rate.v.slice(); save(); }
+  else {
+    var e = (await sb.from("ratings").upsert({ date_id: c.id, couple_id: CP.id, user_id: uid, idx: me, v: ui.rate.v.slice() }, { onConflict: "date_id,idx" })).error;
+    if (e) { alert("No se pudo guardar: " + e.message); return; }
+    await pull(); c = cita(ui.rate.id);
+  }
+  if (done(c)) { ui.rev = c.id; ui.view = "reveal"; }
+  else ui.view = local ? "pass" : "wait";
+  render();
+}
+function passView(){
+  var c = cita(ui.rate.id), next = 1 - ui.rate.p;
+  return '<div class="center"><div class="big">🤫</div><h1>¡Guardado!</h1>' +
+    '<p class="sub">Pásale el teléfono a ' + esc(S.names[next]) + '. Nada de espiar.</p>' +
+    '<button class="btn" onclick="startRate(' + c.id + ',' + next + ')">Soy ' + esc(S.names[next]) + ', mi turno</button>' +
+    '<button class="btn ghost" onclick="ui.view=\'home\';render()">Calificar después</button></div>';
+}
+
+function showRev(id){ ui.rev = id; ui.view = "reveal"; render(); }
+function revealView(){
+  var c = cita(ui.rev), w = winner(c);
+  var h = '<div class="center"><div class="big">' + (w >= 0 ? "👑" : "🤝") + '</div><h1>' +
+    (w >= 0 ? "Ganó " + esc(S.names[w]) : "¡Empate!") + '</h1><p class="sub">' + esc(c.rest) + ' · ' + esc(c.date) + '</p></div><div class="vs">';
+  [0, 1].forEach(function(d){
+    var gap = selfr(c, d) - real(c, d);
+    h += '<div class="card center"><div class="mute">' + esc(S.names[d]) + ' pidió</div><b>' + esc(c.dishes[d]) + '</b>' +
+      '<div style="color:var(--star);font-size:20px;margin-top:6px">' + stars(real(c, d)) + '</div>' +
+      '<div class="mute">según ' + esc(S.names[1 - d]) + '</div>' +
+      '<div class="mute" style="margin-top:6px">Se puso ' + selfr(c, d) + '★' + (gap >= 2 ? " 😏" : gap <= -2 ? " 😅" : "") + '</div></div>';
+  });
+  h += '</div><button class="btn" onclick="ui.view=\'home\';ui.tab=\'rank\';render()">Ver ranking</button>' +
+    '<button class="btn ghost" onclick="ui.view=\'home\';ui.tab=\'citas\';render()">Volver</button>';
+  return h;
+}
+
+function rankView(){
+  var st = stats(), n = st[0].n;
+  var h = '<h1>Ranking</h1><p class="sub">' + n + ' cita' + (n === 1 ? "" : "s") + ' completa' + (n === 1 ? "" : "s") + '</p>';
+  if (!n) return h + '<p class="mute">Completen una cita para ver quién manda.</p>';
+  var lead = st[0].tot === st[1].tot ? -1 : st[0].tot > st[1].tot ? 0 : 1;
+  h += '<div class="vs">';
+  [0, 1].forEach(function(p){
+    var s = st[p], isL = lead === p;
+    var title = lead === -1 ? "Empate técnico" : isL ? TITLES[n % TITLES.length] : LOW[n % LOW.length];
+    h += '<div class="card stat">' + (isL ? '<div class="crown">👑 EN EL TRONO</div>' : '<div class="crown">&nbsp;</div>') +
+      '<b>' + esc(S.names[p]) + '</b><div class="mute">' + title + '</div>' +
+      '<div style="font-size:30px;margin:8px 0;font-weight:800">' + s.tot + '★</div>' +
+      '<div class="mute">' + s.wins + ' victoria' + (s.wins === 1 ? "" : "s") + '</div>' +
+      '<div class="mute">Promedio ' + (s.tot / s.n).toFixed(1) + '</div></div>';
+  });
+  h += '</div><h2>Autoengaño 😏</h2>';
+  [0, 1].forEach(function(p){
+    var d = (st[p].self - st[p].tot) / st[p].n;
+    h += '<div class="card row"><span>' + esc(S.names[p]) + '</span><span class="mute">se califica ' +
+      (d >= 0 ? "+" : "") + d.toFixed(1) + ' vs. lo que opina su pareja</span></div>';
+  });
+  h += '<p class="mute">El que gana el mes elige el próximo restaurante. ¡Es la ley!</p>';
+  return h;
+}
+
+function dishesAll(){
+  var l = [];
+  S.dates.filter(done).forEach(function(c){
+    [0, 1].forEach(function(d){ l.push({ rest: c.rest, dish: c.dishes[d], who: S.names[d], s: real(c, d) }); });
+  });
+  return l;
+}
+function hallView(){
+  var l = dishesAll();
+  var top = l.filter(function(x){ return x.s === 5; }), bad = l.filter(function(x){ return x.s <= 2; });
+  function list(a, empty){
+    if (!a.length) return '<p class="mute">' + empty + '</p>';
+    return a.map(function(x){
+      return '<div class="card"><div class="row"><b>' + esc(x.dish) + '</b><span style="color:var(--star)">' + stars(x.s) + '</span></div>' +
+        '<div class="mute">' + esc(x.rest) + ' · pidió ' + esc(x.who) + '</div></div>';
+    }).join("");
+  }
+  return '<h1>Salón de la Fama ⭐</h1><p class="sub">Platos de 5 estrellas para repetir</p>' + list(top, "Aún no hay platos perfectos.") +
+    '<h2>Zona de Tragedia 💀</h2><p class="sub">Platos de 1 o 2 estrellas: no volver a caer</p>' + list(bad, "Ninguna tragedia registrada. Por ahora.");
+}
+
+function resetAll(){
+  if (confirm("¿Borrar nombres y todas las citas?")) { S = { names: null, dates: [] }; save(); ui = { tab: "citas", view: "home", rate: null, rev: null }; render(); }
+}
+render();
+init();
+</script>
+</body>
+</html>
