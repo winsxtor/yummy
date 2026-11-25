@@ -52,7 +52,7 @@ var SB_URL = "https://plytdrjilrrlanjytocd.supabase.co";
 var SB_KEY = "sb_publishable_BBu8Dm-0-wb9s1ziHDwkng_5CxAZztR";
 /* ======================================================================= */
 var S = { names: null, dates: [] }, sb = null, me = -1, uid = null, ready = false, local = false;
-var CP = null, DT = [], RT = {}, sig = "";
+var CP = null, DT = [], RT = {}, sig = "", initErr = "";
 var ui = { tab: "citas", view: "home", rate: null, rev: null };
 var TITLES = ["Catador Master", "Paladar de Oro", "Olfato Infalible", "Sommelier de Menús", "Ojo de Chef"];
 var LOW = ["Aprendiz de Cocina", "Explorador Valiente", "Apostador Gourmet", "Ruleta Rusa del Menú"];
@@ -90,6 +90,7 @@ async function poll(){
   if (n !== sig) { sig = n; refresh(); }
 }
 async function init(){
+  if (typeof supabase === "undefined") initErr = "No cargó la librería de Supabase (revisa tu conexión).";
   if (typeof supabase !== "undefined" && SB_URL.indexOf("TU-PROYECTO") < 0) {
     try {
       sb = supabase.createClient(SB_URL, SB_KEY);
@@ -97,7 +98,7 @@ async function init(){
       if (!s) { var r = await sb.auth.signInAnonymously(); if (r.error) throw r.error; s = r.data.session; }
       uid = s.user.id;
       await loadRemote();
-    } catch(e){ console.error("Supabase no disponible, modo local:", e); sb = null; }
+    } catch(e){ console.error("Supabase no disponible, modo local:", e); initErr = (e && (e.message || e.error_description)) || String(e); sb = null; }
   }
   if (!sb) { local = true; S = load() || S; ready = true; render(); return; }
   ready = true; derive(); render();
@@ -186,7 +187,7 @@ function home(){
   var pend = S.dates.filter(function(c){ return !done(c); });
   var fin = S.dates.filter(done).slice().reverse();
   var h = '<h1>Citas</h1><p class="sub">' + esc(S.names[0]) + ' vs ' + esc(S.names[1]) + '</p>' +
-    (!local && CP && !CP.full ? '<div class="card mute">💌 Código de pareja: <b style="font-size:20px;letter-spacing:2px">' + esc(CP.code) + '</b><br>Pásaselo a ' + esc(S.names[1 - me]) + ' para que se una desde su teléfono.</div>' : '') + (local ? '<div class="card mute">Modo local: no se sincroniza entre teléfonos.</div>' : '') +
+    (!local && CP && !CP.full ? '<div class="card mute">💌 Código de pareja: <b style="font-size:20px;letter-spacing:2px">' + esc(CP.code) + '</b><br>Pásaselo a ' + esc(S.names[1 - me]) + ' para que se una desde su teléfono.</div>' : '') + (local ? '<div class="card mute">Modo local: no se sincroniza entre teléfonos.' + (initErr ? '<br><b>Motivo del error:</b> ' + esc(initErr) : '') + '</div>' : '') +
     '<button class="btn" style="margin-top:0" onclick="ui.view=\'new\';render()">+ Nueva cita</button>';
   if (pend.length){
     h += '<h2>Pendientes de calificar</h2>';
